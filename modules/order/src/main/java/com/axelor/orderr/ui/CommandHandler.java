@@ -1,6 +1,7 @@
 package com.axelor.orderr.ui;
 
 import com.google.inject.Inject;
+import com.google.inject.Singleton;
 import com.pengrad.telegrambot.model.CallbackQuery;
 import com.pengrad.telegrambot.model.Message;
 import com.pengrad.telegrambot.model.Update;
@@ -8,6 +9,7 @@ import com.pengrad.telegrambot.model.request.InlineKeyboardButton;
 import com.pengrad.telegrambot.model.request.InlineKeyboardMarkup;
 import com.pengrad.telegrambot.request.SendMessage;
 
+@Singleton
 public class CommandHandler {
     private final TgBotService botService;
     private final AdminPanel adminPanel;
@@ -36,7 +38,12 @@ public class CommandHandler {
                 adminPanel.awaitingPassword.remove(chatId);
                 return;
             }
-            else if ("dishes".equals(data) || "create_menu".equals(data) || "tomorrow_orders".equals(data) || "back_role_choose".equals(data)) {
+            else if ("dishes".equals(data)
+                    || "create_menu".equals(data)
+                    || "tomorrow_orders".equals(data)
+                    || "show_complaints".equals(data)
+                    || "month_report".equals(data)
+                    || "back_role_choose".equals(data)) {
                 adminPanel.adminMenuNav(update);
                 return;
             }
@@ -46,7 +53,11 @@ public class CommandHandler {
             else if (data.startsWith("remove_dish:") || "back_show_dishes".equals(data)) {
                 adminPanel.deletionMenuNav(update);
             }
-            else if ("add_dish".equals(data) || "remove_dish".equals(data) || "clear".equals(data) || "menu_ready".equals(data) || "back_admin_menu".equals(data)) {
+            else if ("add_dish".equals(data)
+                    || "remove_dish".equals(data)
+                    || "clear".equals(data)
+                    || "menu_ready".equals(data)
+                    || "back_admin_menu".equals(data)) {
                 adminPanel.tomorrowMenuNav(update);
             }
             else if (data.startsWith("add_tm_dish:") || "back_tomorrow_menu".equals(data)) {
@@ -71,10 +82,15 @@ public class CommandHandler {
             } else if (data.startsWith("select_portion:")) {
                 employeePanel.portionSelection(update);
                 return;
-            } else if ("my_orders".equals(data) || "make_order".equals(data) || "back_role_choose".equals(data)) {
+            } else if ("my_orders".equals(data)
+                    || "make_order".equals(data)
+                    || "write_compl".equals(data)
+                    || "back_role_choose".equals(data)) {
                 employeePanel.employeePanelNav(update);
             } else if ("back_employee_panel".equals(data)) {
                 employeePanel.backToEmployeePanel(update);
+            } else if (data.startsWith("rateDish:")) {
+                employeePanel.dishRating(update);
             }
         }
 
@@ -92,9 +108,18 @@ public class CommandHandler {
             return;
         }
 
-        if (message.text() != null && adminPanel.idDishCreating(chatId)) {
+        if (message.text() != null && adminPanel.isDishCreating(chatId)) {
             adminPanel.dishInfoInsert(chatId, message);
             return;
+        }
+
+        if (message.text() != null && employeePanel.isComplWriting(chatId)) {
+            if (message.text().length() > 100 || message.text().length() < 10) {
+                botService.sendMessage(String.valueOf(chatId), "Сообщение должно быть в диапозоне 10 - 100 символов");
+            } else {
+                employeePanel.complaintSaving(chatId, message);
+                return;
+            }
         }
 
         if ("/start".equalsIgnoreCase(text)) {

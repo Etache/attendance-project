@@ -1,12 +1,15 @@
 package com.axelor.orderr.ui;
 
 import com.axelor.auth.db.User;
+import com.axelor.order.db.Complaints;
 import com.axelor.order.db.Dish;
 import com.axelor.order.db.Menu;
 import com.axelor.order.db.Orderr;
+import com.axelor.orderr.service.complaints.ComplaintsService;
 import com.axelor.orderr.service.dish.DishService;
 import com.axelor.orderr.service.menu.MenuService;
 import com.axelor.orderr.service.order.OrderService;
+import com.axelor.orderr.service.rating.DishRatingService;
 import com.axelor.orderr.service.user.UserService;
 import com.google.inject.Inject;
 import com.pengrad.telegrambot.model.CallbackQuery;
@@ -19,6 +22,8 @@ import com.pengrad.telegrambot.request.SendMessage;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 
 public class EmployeePanel {
     private final TgBotService botService;
@@ -26,20 +31,26 @@ public class EmployeePanel {
     private final DishService dishService;
     private final MenuService menuService;
     private final OrderService orderService;
+    private final ComplaintsService complaintsService;
+    private final DishRatingService dishRatingService;
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 
     private final Map<Long, Long> pendingRegistration = new HashMap<>();
     private final Map<Long, Integer> registrationMessage = new HashMap<>();
     private final Map<Long, Orderr> pendingOrders = new HashMap<>();
     private final Map<Long, Integer> dishSelectionMessages = new HashMap<>(); // Сообщения с выбором блюда
     private final Map<Long, Integer> portionSelectionMessages = new HashMap<>();
+    private final Map<Long, Complaints> pendingCompl = new HashMap<>();
 
     @Inject
-    public EmployeePanel(TgBotService botService, UserService userService, DishService dishService, MenuService menuService, OrderService orderService) {
+    public EmployeePanel(TgBotService botService, UserService userService, DishService dishService, MenuService menuService, OrderService orderService, ComplaintsService complaintsService, DishRatingService dishRatingService) {
         this.botService = botService;
         this.userService = userService;
         this.dishService = dishService;
         this.menuService = menuService;
         this.orderService = orderService;
+        this.complaintsService = complaintsService;
+        this.dishRatingService = dishRatingService;
     }
 
 
@@ -53,11 +64,11 @@ public class EmployeePanel {
 
         User user = userService.getUserByTelegramId(telegramId);
         if (user != null) {
-            botService.sendMessage(String.valueOf(chatId), "Добро пожаловать, " + user.getName());
+            botService.sendMessage(String.valueOf(chatId), "Добро пожаловать ");
             Orderr order = new Orderr();
             order.setUser(user);
             pendingOrders.put(chatId, order);
-//            showDishList(chatId);
+
             employeePanel(chatId, user);
             return;
         }
@@ -94,7 +105,6 @@ public class EmployeePanel {
             order.setUser(user);
             pendingOrders.put(chatId, order);
 
-//            showDishList(chatId);
             employeePanel(chatId, user);
         }
     }
@@ -107,11 +117,12 @@ public class EmployeePanel {
 
         InlineKeyboardButton btn_my_orders = new InlineKeyboardButton("\uD83D\uDCDC Мои заказы").callbackData("my_orders");
         InlineKeyboardButton btn_make_order = new InlineKeyboardButton("\uD83E\uDD61 Сделать заказ").callbackData("make_order");
-        InlineKeyboardButton btn_back_role_choose = new InlineKeyboardButton("⬅\uFE0F Назад").callbackData("back_role_choose");
+        InlineKeyboardButton btn_write_compl = new InlineKeyboardButton("\uD83D\uDCDD Жалобы/предложения").callbackData("write_compl");
+        InlineKeyboardButton btn_back_role_choose = new InlineKeyboardButton("⬅️ Назад").callbackData("back_role_choose");
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
         markup.addRow(btn_my_orders, btn_make_order);
-        markup.addRow(btn_back_role_choose);
-        botService.sendMessage(String.valueOf(chatId), "Добро пожаловать, " + user.getName(), markup);
+        markup.addRow(btn_write_compl, btn_back_role_choose);
+        botService.sendMessage(String.valueOf(chatId), "Добро пожаловать", markup);
     }
 
     public void employeePanelNav(Update update) {
@@ -126,6 +137,9 @@ public class EmployeePanel {
             myOrdersList(chatId);
         } else if ("make_order".equals(data)) {
             showDishList(chatId);
+        } else if ("write_compl".equals(data)) {
+            botService.sendMessage(String.valueOf(chatId), "Что бы вы хотели изменить/внести в меню или сервис?");
+            pendingCompl.put(chatId, new Complaints());
         } else if ("back_role_choose".equals(data)) {
             CommandHandler.roleChoose(String.valueOf(chatId), botService);
         }
@@ -137,6 +151,10 @@ public class EmployeePanel {
         List<Orderr> ordersById = orderService.getOrderById(user);
         StringBuilder text = new StringBuilder();
 
+        if (ordersById.isEmpty()) {
+            text.append("\uD83D\uDE45 У вас еще нет заказов");
+        }
+
         text.append("\uD83D\uDDD3 Ваши заказы:\n");
         for (Orderr orderr : ordersById) {
             text.append("\n")
@@ -146,17 +164,13 @@ public class EmployeePanel {
                     .append(" порция");
         }
 
-        if (ordersById.isEmpty()) {
-            text.append("\uD83D\uDE45 У вас еще нет заказов");
-        }
-
-        InlineKeyboardButton btn_back_employee_panel = new InlineKeyboardButton("⬅\uFE0F Назад").callbackData("back_employee_panel");
+        InlineKeyboardButton btn_back_employee_panel = new InlineKeyboardButton("⬅️ Назад").callbackData("back_employee_panel");
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup(btn_back_employee_panel);
 
         botService.sendMessage(String.valueOf(chatId), text.toString(), markup);
     }
 
-        // возвращение в панель меню сотрудника
+    // возвращение в панель меню сотрудника
     public void backToEmployeePanel(Update update) {
         if (update.callbackQuery() == null) return;
         CallbackQuery callback = update.callbackQuery();
@@ -174,11 +188,11 @@ public class EmployeePanel {
         Menu menu = menuService.getTomorrowMenu();
         List<Dish> dishes = menu.getDishes();
         StringBuilder text = new StringBuilder();
-        text.append("\uD83C\uDF7D Выберите блюдо: ");
 
-        if (dishes.isEmpty()) {
-            text.append("\n\n\uD83D\uDE45 Меню на завтра пустое");
-            return;
+        if (menu == null || menu.getDishes() == null || menu.getDishes().isEmpty()) {
+            text.append("\uD83D\uDE45 Меню на завтра пустое \n");
+        } else {
+            text.append("\uD83C\uDF7D Выберите блюдо: ");
         }
 
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
@@ -187,7 +201,7 @@ public class EmployeePanel {
                     .callbackData("select_dish:" + dish.getId());
             markup.addRow(button);
         }
-        InlineKeyboardButton bnt_back_employee_panel = new InlineKeyboardButton("⬅\uFE0FНазад").callbackData("back_employee_panel");
+        InlineKeyboardButton bnt_back_employee_panel = new InlineKeyboardButton("⬅️Назад").callbackData("back_employee_panel");
         markup.addRow(bnt_back_employee_panel);
 
         SendMessage sendMessage = new SendMessage(String.valueOf(chatId), text.toString()).replyMarkup(markup);
@@ -207,7 +221,7 @@ public class EmployeePanel {
             return;
         }
         if (!pendingOrders.containsKey(chatId)) {
-            botService.sendMessage(String.valueOf(chatId), "\uD83D\uDE45 Заказ не найден. Попробуйте начать заказ снова.");
+            botService.sendMessage(String.valueOf(chatId), "\uD83D\uDE45 Заказ не сделан. Попробуйте начать заказ снова. \uD83D\uDC49\uD83C\uDFFC /start");
             return;
         }
 
@@ -238,12 +252,13 @@ public class EmployeePanel {
 
         // Проверяем, что заказ есть
         if (!pendingOrders.containsKey(chatId)) {
-            botService.sendMessage(String.valueOf(chatId), "\uD83D\uDE45 Заказ не найден. Попробуйте начать заказ заново.");
+            botService.sendMessage(String.valueOf(chatId), "\uD83D\uDE45 Заказ не сделан. Попробуйте начать заказ заново. \uD83D\uDC49\uD83C\uDFFC /start");
             return;
         }
         Orderr order = pendingOrders.get(chatId);
         order.setPortion_size(portionSize);
 
+        long dishId = order.getDish().getId();
         Orderr persistedOrder = orderService.makeOrder(order.getUser(), order.getDish(), order.getPortion_size());
 
         pendingOrders.remove(chatId);
@@ -251,11 +266,53 @@ public class EmployeePanel {
             botService.safeDelete(String.valueOf(chatId), portionSelectionMessages.get(chatId));
             portionSelectionMessages.remove(chatId);
         }
+
+        employeePanel(chatId, user);
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup(
+                new InlineKeyboardButton("⭐️").callbackData("rateDish:" + dishId + ":1"),
+                new InlineKeyboardButton("⭐️").callbackData("rateDish:" + dishId + ":2"),
+                new InlineKeyboardButton("⭐️").callbackData("rateDish:" + dishId + ":3"),
+                new InlineKeyboardButton("⭐️").callbackData("rateDish:" + dishId + ":4"),
+                new InlineKeyboardButton("⭐️").callbackData("rateDish:" + dishId + ":5")
+        );
+
         botService.sendMessage(String.valueOf(chatId), "✅ Ваш заказ сохранён!\n" +
                 persistedOrder.getUser().getName() + "\n" +
                 persistedOrder.getDish().getName() + " порция " +
-                persistedOrder.getPortion_size());
+                persistedOrder.getPortion_size() +
+                "\n\nНе забудьте оценить блюдо, когда опробуете", markup);
+    }
 
-        employeePanel(chatId, user);
+        // оценка блюд
+    public void dishRating(Update update) {
+        if (update.callbackQuery() == null) return;
+        CallbackQuery callback = update.callbackQuery();
+        long chatId = callback.maybeInaccessibleMessage().chat().id();
+        int messageId = callback.maybeInaccessibleMessage().messageId();
+        botService.safeDelete(String.valueOf(chatId), messageId);
+
+        String[] parts = callback.data().split(":");
+        long dishId = Long.parseLong(parts[1]);
+        Integer rating = Integer.valueOf(parts[2]);
+
+        dishRatingService.setDishRating(dishId, rating);
+    }
+
+    // Жалобы/предложения
+    public boolean isComplWriting(long chatId) {
+        return pendingCompl.containsKey(chatId);
+    }
+
+    public void complaintSaving(long chatId, Message message) {
+        Complaints complaints = pendingCompl.get(chatId);
+        User user = userService.getUserByTelegramId(chatId);
+        if (pendingCompl.containsKey(chatId)) {
+            complaints.setText(message.text());
+            complaintsService.saveComplaint(complaints);
+            botService.sendMessage(String.valueOf(chatId), "Отправлено. Спасибо за отзыв!");
+            pendingCompl.remove(chatId);
+            employeePanel(chatId, user);
+        }
     }
 }
