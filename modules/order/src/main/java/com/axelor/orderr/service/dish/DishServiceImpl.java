@@ -19,7 +19,7 @@ public class DishServiceImpl implements DishService{
     @Override
     @Transactional(rollbackOn = {Exception.class})
     public List<Dish> getAllDishes() {
-        return repo.all().fetch();
+        return repo.all().filter("self.idDeleted = false").fetch();
     }
 
     @Override
@@ -40,6 +40,7 @@ public class DishServiceImpl implements DishService{
         if (exsistDish == null) {
             throw new IllegalArgumentException("блюдо с id" + id + " не найдено.");
         }
-        repo.remove(exsistDish);
+        exsistDish.setIdDeleted(true);
+        repo.save(exsistDish);
     }
 }
